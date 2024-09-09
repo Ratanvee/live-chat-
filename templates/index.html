@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Private Chat with Client IDs</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f4f4f4;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        #chat {
+            width: 50%;
+            height: 400px;
+            border: 1px solid #ccc;
+            margin-bottom: 10px;
+            padding: 10px;
+            overflow-y: scroll;
+        }
+        #message {
+            width: 80%;
+            padding: 10px;
+        }
+        #send {
+            padding: 10px 20px;
+        }
+    </style>
+</head>
+<body>
+    <h2>Private Chat with Client IDs</h2>
+    <div id="chat"></div>
+    <input type="text" id="message" placeholder="TargetClient: Message">
+    <button id="send">Send</button>
+
+    <script>
+        const chat = document.getElementById('chat');
+        const messageInput = document.getElementById('message');
+        const sendButton = document.getElementById('send');
+
+        // Prompt the user for a unique ID (e.g., username)
+        const clientId = prompt("Enter your name or client ID:");
+
+        // Connect to WebSocket using client_id
+        const socket = new WebSocket(`ws://localhost:8000/ws/${clientId}`);
+
+        // When receiving a message from WebSocket
+        socket.onmessage = function(event) {
+            const message = document.createElement('p');
+            message.innerText = event.data;
+            chat.appendChild(message);
+        };
+
+        // Send message when button is clicked
+        sendButton.onclick = function() {
+            const message = messageInput.value;
+            socket.send(message);
+            messageInput.value = ''; // Clear the input field
+        };
+    </script>
+</body>
+</html>
