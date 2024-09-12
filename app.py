@@ -1,12 +1,24 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends
 from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
-from database import SessionLocal, ChatMessage
-import datetime
+from datetime import datetime
+from typing import List
+import json
+from database import ChatMessage, get_db
 
 app = FastAPI()
 
-# A manager to handle WebSocket connections
+# Store message in the database
+def store_message(db: Session, sender: str, message: str, receiver: str = None):
+    timestamp = datetime.now()
+    db_message = ChatMessage(sender=sender, message=message, receiver=receiver, timestamp=timestamp)
+    db.add(db_message)
+    db.commit()
+
+# Retrieve chat history from the database
+def get_chat_history(db: Session, limit: int = 50):
+    return db.query(ChatMessage).order_by(ChatMessage.timestamp.desc()).limit(limit).all()
+
 class ConnectionManager:
     def __init__(self):
         self.active_connections = {}
@@ -22,36 +34,12 @@ class ConnectionManager:
     async def send_personal_message(self, message: str, websocket: WebSocket):
         await websocket.send_text(message)
 
-    async def broadcast(self, message: str):
-        for connection in self.active_connections.values():
-            await connection.send_text(message)
-
     async def send_message_to_client(self, target_client_id: str, message: str):
         if target_client_id in self.active_connections:
             websocket = self.active_connections[target_client_id]
             await websocket.send_text(message)
-        else:
-            print(f"Client {target_client_id} not found.")
 
 manager = ConnectionManager()
-
-# Dependency to get the database session
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
-# Store message in database
-async def store_message(db: Session, sender: str, message: str, receiver: str = None):
-    db_message = ChatMessage(sender=sender, message=message, receiver=receiver)
-    db.add(db_message)
-    db.commit()
-
-# Retrieve chat history from the database
-def get_chat_history(db: Session, limit: int = 50):
-    return db.query(ChatMessage).order_by(ChatMessage.timestamp.desc()).limit(limit).all()
 
 @app.get("/")
 async def get():
@@ -63,31 +51,67 @@ async def get():
 async def websocket_endpoint(websocket: WebSocket, client_id: str, db: Session = Depends(get_db)):
     await manager.connect(websocket, client_id)
     try:
-        # Send chat history when the client connects
+        # Send chat history to the client
         chat_history = get_chat_history(db)
         for msg in reversed(chat_history):
-            if msg.receiver:
-                await manager.send_message_to_client(msg.receiver, f"[History] {msg.sender} to {msg.receiver}: {msg.message}")
-            else:
-                await manager.send_personal_message(f"[History] {msg.sender}: {msg.message}", websocket)
-        
+            timestamp = msg.timestamp.strftime("%H:%M:%S")
+            data = {
+                "sender": msg.sender,
+                "message": msg.message,
+                "timestamp": timestamp,
+            }
+            await manager.send_personal_message(json.dumps(data), websocket)
+
         while True:
             data = await websocket.receive_text()
+            timestamp = datetime.now().strftime("%H:%M:%S")
 
-            if ":" in data:
-                target_client_id, message = data.split(":", 1)
-                await manager.send_message_to_client(target_client_id.strip(), f"Message from {client_id}: {message.strip()}")
-                await store_message(db, client_id, message.strip(), target_client_id.strip())  # Save message
+            parsed_data = json.loads(data)
+            message = parsed_data["message"]
+            receiver = parsed_data.get("receiver")  # Get the receiver if provided
+
+            # Prepare message data
+            message_data = {
+                "sender": client_id,
+                "message": message,
+                "timestamp": timestamp
+            }
+
+            # If there's a receiver, send the message to that specific client
+            if receiver:
+                await manager.send_message_to_client(receiver, json.dumps(message_data))
             else:
-                await manager.broadcast(f"Client {client_id} says: {data}")
-                await store_message(db, client_id, data)  # Save broadcast message
+                # Broadcast the message to everyone if no receiver is specified
+                for connection in manager.active_connections.values():
+                    await connection.send_text(json.dumps(message_data))
+
+            # Store the message in the database (with or without a receiver)
+            store_message(db, client_id, message, receiver)
+
     except WebSocketDisconnect:
         manager.disconnect(client_id)
 
 
 
-if __name__ == '__main__':
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+if __name__ == "__main__":
     import uvicorn
-    # uvicorn.run(app, host="127.0.0.1", port=8000, reload=True)
-    port = int(os.getenv("PORT", 8000))  # Use PORT env variable, default to 8000
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    uvicorn.run(app, host="0.0.0.0", port=8000)
+
+
+
+
